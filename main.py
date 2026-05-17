@@ -1,36 +1,37 @@
+import asyncio
 from dataclasses import dataclass
 from enum import Enum
-from collections import deque
 
-class Agent:
-
-    def __init__(self, name):
-        self.name = name
-        self.memory = Memory()
-        self.queue = Queue()
-      
-    def process(self, task):
-      self.memory.add(task.description)
-      task.status = TaskStatus.RUNNING
-      print(f"{self.name} processing {task}")
-      task.status = TaskStatus.COMPLETED
-
-    def send_message(self, receiver, message):
-      receiver.queue.enqueue(message)
-
-    def process_queue(self):
-      while not self.queue.is_empty():
-          item = self.queue.dequeue()
-          self.process(item)
-    
-    def __repr__(self):
-        return f"Agent(name={self.name})"
 
 class TaskStatus(Enum):
 
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
+
+
+@dataclass
+class Task:
+
+    description: str
+    status: TaskStatus = TaskStatus.PENDING
+
+
+@dataclass
+class Message:
+
+    sender: str
+    receiver: str
+    content: str
+
+
+@dataclass
+class Event:
+
+    event_type: str
+    source: str
+    payload: dict
+
 
 class Memory:
 
@@ -43,62 +44,160 @@ class Memory:
     def get_all(self):
         return self.history
 
-@dataclass # dataclass is just to make this class short and easier and we donot need to initialize instance variables and representations....
-class Task:
-
-    description: str
-    status: TaskStatus = TaskStatus.PENDING
-
-@dataclass
-class Message:
-
-    sender: str
-    receiver: str
-    content: str
-
-class PlannerAgent(Agent):
-
-    def process(self, task):
-        print(f"{self.name} planning {task.description}")
-
-
-class WorkerAgent(Agent):
-
-    def process(self, task):
-        print(f"{self.name} executing {task.description}")
-
-
-class AgentFactory:
-
-    @staticmethod # method in class becomes like a normal function.....since it does nto use any instance or class variables
-    def create_agent(agent_type, name):
-        if agent_type == "planner":
-            return PlannerAgent(name)
-        elif agent_type == "worker":
-            return WorkerAgent(name)
-        else:
-            raise ValueError("Unknown agent type")
-
-
-@dataclass
-class Event:
-
-    event_type: str
-    source: str
-    payload: dict
-
 
 class Queue:
 
     def __init__(self):
-        self.items = deque()
+        self.items = asyncio.Queue()
 
-    def enqueue(self, item):
-        self.items.append(item)
+    async def enqueue(self, item):
+        await self.items.put(item)
 
-    def dequeue(self):
-        if self.items:
-            return self.items.popleft()
+    async def dequeue(self):
+        return await self.items.get()
 
     def is_empty(self):
-        return len(self.items) == 0
+        return self.items.empty()
+
+
+class Agent:
+
+    def __init__(self, name):
+
+        self.name = name
+        self.memory = Memory()
+        self.queue = Queue()
+
+    async def process(self, task):
+
+        self.memory.add(task.description)
+        task.status = TaskStatus.RUNNING
+        print(f"{self.name} processing {task.description}")
+        await asyncio.sleep(2)
+        task.status = TaskStatus.COMPLETED
+        print(f"{self.name} completed {task.description}")
+
+    async def send_message(self, receiver, message):
+
+        await receiver.queue.enqueue(message)
+
+    async def process_queue(self):
+
+        while True:
+            item = await self.queue.dequeue()
+            await self.process(item)
+
+    def __repr__(self):
+
+        return f"Agent(name={self.name})"
+
+
+class AgentNode(Agent):
+
+    def __init__(self, name, role, sop=""):
+
+        super().__init__(name)
+        self.role = role
+        self.sop = sop
+
+    async def process(self, task):
+
+        self.memory.add(task.description)
+        task.status = TaskStatus.RUNNING
+
+        print(f"\n[{self.name}]")
+        print(f"Role: {self.role}")
+        print(f"Task: {task.description}")
+
+        await asyncio.sleep(2)
+        task.status = TaskStatus.COMPLETED
+        print(f"{self.name} completed task")
+
+
+class AgentFactory:
+
+    @staticmethod
+    def create_agent(name, role, sop=""):
+
+        return AgentNode(
+            name=name,
+            role=role,
+            sop=sop
+        )
+
+
+class BossAgent(Agent):
+
+    def __init__(self, name):
+
+        super().__init__(name)
+
+        self.children = []
+        self.task_registry = {}
+        self.event_log = []
+
+    async def process(self, task):
+
+        print(f"\n{self.name} received main task:")
+        print(task.description)
+        domains = self.decompose_task(task)
+        await self.spawn_agents(domains)
+
+    def decompose_task(self, task):
+
+        return [
+            {
+                "name": "AcademicNode",
+                "role": "Curriculum Planning",
+                "sop": "Design curriculum and course structure"
+            },
+            {
+                "name": "FinanceNode",
+                "role": "Finance Planning",
+                "sop": "Design budget and fee structure"
+            },
+            {
+                "name": "ComplianceNode",
+                "role": "Compliance Planning",
+                "sop": "Handle accreditation and compliance"
+            }
+        ]
+
+    async def spawn_agents(self, domains):
+
+        for domain in domains:
+
+            agent = AgentFactory.create_agent(
+                name=domain["name"],
+                role=domain["role"],
+                sop=domain["sop"]
+            )
+
+            self.children.append(agent)
+
+            asyncio.create_task(agent.process_queue())
+
+            subtask = Task(
+                description=f"Handle {domain['role']}"
+            )
+
+            await agent.queue.enqueue(subtask)
+
+            print(f"{self.name} spawned {agent.name}")
+
+
+async def main():
+
+    boss = BossAgent("BossAgent")
+    asyncio.create_task(boss.process_queue())
+    initial_task = Task(
+        description="Create B.Tech AI degree program"
+    )
+
+    await boss.queue.enqueue(initial_task)
+
+    while True:
+        await asyncio.sleep(1)
+
+
+asyncio.run(main())
