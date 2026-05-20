@@ -137,14 +137,33 @@ class BossAgent(Agent):
         self.event_log = []
 
     async def process(self, task):
-
+        # process method for boss agent will be different from rest of the agents - it will handle task decomposition and agent spawning
         print(f"\n{self.name} received main task:")
         print(task.description)
         domains = self.decompose_task(task)
         await self.spawn_agents(domains)
 
     def decompose_task(self, task):
-
+    # yet to change this to dynamic decomposition based on task description
+    # currently hardcoded for the B.Tech AI degree program example
+    # should return something like:
+        # return [
+        #     {
+        #         "name": "AcademicNode",
+        #         "role": "Curriculum Planning",
+        #         "sop": "Design curriculum and course structure"
+        #     },
+        #     {
+        #         "name": "FinanceNode",
+        #         "role": "Finance Planning",
+        #         "sop": "Design budget and fee structure"
+        #     },
+        #     {
+        #         "name": "ComplianceNode",
+        #         "role": "Compliance Planning",
+        #         "sop": "Handle accreditation and compliance"
+        #     }
+        # ]
         return [
             {
                 "name": "AcademicNode",
