@@ -1,0 +1,69 @@
+Ignoring wrong pointing object 7 0 (offset 0)
+Ignoring wrong pointing object 97 0 (offset 0)
+Ignoring wrong pointing object 146 0 (offset 0)
+Ignoring wrong pointing object 151 0 (offset 0)
+Ignoring wrong pointing object 153 0 (offset 0)
+Ignoring wrong pointing object 162 0 (offset 0)
+Ignoring wrong pointing object 177 0 (offset 0)
+Ignoring wrong pointing object 179 0 (offset 0)
+Ignoring wrong pointing object 181 0 (offset 0)
+Ignoring wrong pointing object 187 0 (offset 0)
+Ignoring wrong pointing object 223 0 (offset 0)
+Ignoring wrong pointing object 255 0 (offset 0)
+Ignoring wrong pointing object 256 0 (offset 0)
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading PDFs from: D:\dc project-2\docs
+Loading PDF: Rukes_and_Regulations_for_Students 2.pdf
+Loading PDF: Statutory_bodies_and_key_functionaries (1).pdf
+Loading PDF: Statutory_bodies_and_key_functionaries.pdf
+Loaded 81 pages in total
+Total chunks: 227
+Loading embedding model...
+BertModel LOAD REPORT from: BAAI/bge-small-en
+Loading existing vector DB...
+
+Original Query: who is the dean of student affairs?
+
+Rewritten Query: Dean of Student Affairs
+
+Retrieved 12 chunks (multi-query)
+
+--- Chunk 1 (Page 52) ---
+■■■ Dean of Students Affairs (DOSA)
+■ ■■■ Associate Dean, Student Affairs (ADSA)
+■ ■■■ Associate Dean, Hostel Affairs (ADHA)
+■ ■■■ Associate Dean, Awards & Scholarships (ADAS)
+■ PICs: Training & Place
+
+--- Chunk 2 (Page 7) ---
+20 Dean of Students Affairs
+ DOSA 
+Student Scholarships & Prizes
+Committee
+21 Dean of Students Affairs
+ DOSA  Student Wellbeing Committee
+Statutory bodies and key functionaries
+8
+
+--- Chunk 3 (Page 56) ---
+4. Deans & Associate Deans
+4.1 Deans
+S.No. Dean Function
+1 Aashish Mathur Dean of Digital Infrastructure & Automation (DDIA)
+2 Ankita Sharma Dean of Students Affairs (DOSA)
+3 Atul Kumar Dean of Academ
+
+Generating answer...
+
+Final Answer:
+
+S.No. Dean Function
+1 Aashish Mathur Dean of Digital Infrastructure & Automation (DDIA)
+2 Ankita Sharma Dean of Students Affairs (DOSA)
+3 Atul Kumar Dean of Academic Affairs (DOAA)
+4 Kaushal A. Desai Dean of Resources & Alumni (DORA)
+5 Meenu Chhabra Acting Dean of Faculty Affairs (DOFA)
+6 Deepak Swami Dean of Infrastructure Planning (DOIP)
+7 Sunil Kumar Khijwania Dean of R&D (DORD)
+8 Shree Prakash Tiwari Dean of Administration (DOAD)
+9 Ankur Gupta Dean of International Relations (DOIR)
