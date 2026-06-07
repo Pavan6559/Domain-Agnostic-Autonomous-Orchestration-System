@@ -1,7 +1,15 @@
 import asyncio
 
-from core import Task, TaskStatus
-from runtime import Memory, Queue
+from core import (
+    Task,
+    TaskStatus,
+    Event,
+    EventType
+)
+
+from runtime import Memory
+from registry import AgentRegistry
+from router import *
 
 
 class Agent:
@@ -10,69 +18,91 @@ class Agent:
 
         self.name = name
         self.memory = Memory()
-        self.queue = Queue()
+        self.inbox = asyncio.Queue()
+        self.router = None
+
+    def set_router(self, router):
+        self.router = router
+
+    async def send_event(
+        self,
+        receiver,
+        event_type,
+        content
+    ):
+
+        event = Event(
+            sender=self.name,
+            receiver=receiver,
+            event_type=event_type,
+            content=content
+        )
+
+        await self.router.route_event(event)
 
     async def process(self, task):
-
         self.memory.add(task.description)
-
         task.status = TaskStatus.RUNNING
-
-        print(f"{self.name} processing {task.description}")
-
+        print(
+            f"{self.name} processing "
+            f"{task.description}"
+        )
         await asyncio.sleep(2)
-
         task.status = TaskStatus.COMPLETED
+        print(
+            f"{self.name} completed "
+            f"{task.description}"
+        )
 
-        print(f"{self.name} completed {task.description}")
+    async def process_event(self, event):
+        pass
 
-    async def send_message(self, receiver, message):
-
-        await receiver.queue.enqueue(message)
-
-    async def process_queue(self):
-
+    async def run(self):
         while True:
-
-            item = await self.queue.dequeue()
-
-            await self.process(item)
-
-    def __repr__(self):
-
-        return f"Agent(name={self.name})"
+            event = await self.inbox.get()
+            await self.process_event(event)
 
 
 class AgentNode(Agent):
 
-    def __init__(self, name, role, sop=""):
-
+    def __init__(self,name,role,sop=""):
         super().__init__(name)
-
         self.role = role
         self.sop = sop
 
-    async def process(self, task):
+    async def process_event(self, event):
 
-        self.memory.add(task.description)
+        if event.event_type == EventType.TASK:
 
-        task.status = TaskStatus.RUNNING
+            task = event.content
 
-        print(f"\n[{self.name}]")
-        print(f"Role: {self.role}")
-        print(f"Task: {task.description}")
+            self.memory.add(task.description)
 
-        await asyncio.sleep(2)
+            task.status = TaskStatus.RUNNING
 
-        task.status = TaskStatus.COMPLETED
+            print(f"\n[{self.name}]")
+            print(f"Role: {self.role}")
+            print(f"Task: {task.description}")
 
-        print(f"{self.name} completed task")
+            await asyncio.sleep(2)
+
+            task.status = TaskStatus.COMPLETED
+
+            print(
+                f"{self.name} completed task"
+            )
+
+            await self.send_event(
+                receiver="BossAgent",
+                event_type=EventType.STATUS,
+                content=f"{self.name} completed"
+            )
 
 
 class AgentFactory:
 
     @staticmethod
-    def create_agent(name, role, sop=""):
+    def create_agent(name,role,sop=""):
 
         return AgentNode(
             name=name,
@@ -84,20 +114,23 @@ class AgentFactory:
 class BossAgent(Agent):
 
     def __init__(self, name):
-
         super().__init__(name)
-
-        self.children = []
-        self.task_registry = {}
+        self.registry = AgentRegistry()
         self.event_log = []
 
-    async def process(self, task):
+    async def process_event(self, event):
 
-        print(f"\n{self.name} received main task:")
+        print(
+            f"[Boss] Received "
+            f"{event.content}"
+        )
+
+    async def start_workflow(self, task):
+        print(
+            f"\n{self.name} received:"
+        )
         print(task.description)
-
         domains = self.decompose_task(task)
-
         await self.spawn_agents(domains)
 
     def decompose_task(self, task):
@@ -106,17 +139,17 @@ class BossAgent(Agent):
             {
                 "name": "AcademicNode",
                 "role": "Curriculum Planning",
-                "sop": "Design curriculum and course structure"
+                "sop": "Design curriculum"
             },
             {
                 "name": "FinanceNode",
                 "role": "Finance Planning",
-                "sop": "Design budget and fee structure"
+                "sop": "Budget planning"
             },
             {
                 "name": "ComplianceNode",
                 "role": "Compliance Planning",
-                "sop": "Handle accreditation and compliance"
+                "sop": "Accreditation"
             }
         ]
 
@@ -130,14 +163,26 @@ class BossAgent(Agent):
                 sop=domain["sop"]
             )
 
-            self.children.append(agent)
+            self.registry.register(agent)
+            agent.set_router(self.router)
+            self.router.register_agent(agent)
 
-            asyncio.create_task(agent.process_queue())
-
-            subtask = Task(
-                description=f"Handle {domain['role']}"
+            asyncio.create_task(
+                agent.run()
             )
 
-            await agent.queue.enqueue(subtask)
+            subtask = Task(
+                description=
+                f"Handle {domain['role']}"
+            )
 
-            print(f"{self.name} spawned {agent.name}")
+            await self.send_event(
+                receiver=agent.name,
+                event_type=EventType.TASK,
+                content=subtask
+            )
+
+            print(
+                f"{self.name} spawned "
+                f"{agent.name}"
+            )

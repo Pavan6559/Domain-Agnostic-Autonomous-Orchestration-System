@@ -9,6 +9,12 @@ class TaskStatus(Enum):
     COMPLETED = "COMPLETED"
 
 
+class EventType(Enum):
+
+    TASK = "TASK"
+    STATUS = "STATUS"
+
+
 @dataclass
 class Task:
 
@@ -17,16 +23,9 @@ class Task:
 
 
 @dataclass
-class Message:
+class Event:
 
     sender: str
     receiver: str
-    content: str
-
-
-@dataclass
-class Event:
-
-    event_type: str
-    source: str
-    payload: dict
+    event_type: EventType
+    content: object
