@@ -3,10 +3,24 @@ from enum import Enum
 
 
 class TaskStatus(Enum):
-
+    
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
+
+class AgentState(Enum):
+
+    IDLE = "IDLE"
+    WORKING = "WORKING"
+    WAITING = "WAITING"
+    FAILED = "FAILED"
+
+class EventType(Enum):
+
+    TASK = "TASK"
+    STATUS = "STATUS"
+    SPAWN_AGENT = "SPAWN_AGENT"
+    RESULT = "RESULT"
 
 
 @dataclass
@@ -17,16 +31,9 @@ class Task:
 
 
 @dataclass
-class Message:
+class Event:
 
     sender: str
     receiver: str
-    content: str
-
-
-@dataclass
-class Event:
-
-    event_type: str
-    source: str
-    payload: dict
+    event_type: EventType
+    content: object

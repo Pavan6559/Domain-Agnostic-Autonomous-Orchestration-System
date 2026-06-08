@@ -1,7 +1,16 @@
 import asyncio
 
-from core import Task, TaskStatus
-from runtime import Memory, Queue
+from core import (
+    AgentState,
+    Task,
+    TaskStatus,
+    Event,
+    EventType
+)
+from scheduler import Scheduler
+from runtime import Memory
+from registry import AgentRegistry
+from router import EventRouter
 
 
 class Agent:
@@ -10,69 +19,156 @@ class Agent:
 
         self.name = name
         self.memory = Memory()
-        self.queue = Queue()
+        self.inbox = asyncio.Queue()
+        self.router = None
+        self.state = AgentState.IDLE
+        self.parent = None
+        self.children = []
+
+    def set_router(self, router):
+        self.router = router
+
+    async def send_event(
+        self,
+        receiver,
+        event_type,
+        content
+    ):
+
+        event = Event(
+            sender=self.name,
+            receiver=receiver,
+            event_type=event_type,
+            content=content
+        )
+
+        await self.router.route_event(event)
 
     async def process(self, task):
-
         self.memory.add(task.description)
-
         task.status = TaskStatus.RUNNING
-
-        print(f"{self.name} processing {task.description}")
-
+        print(
+            f"{self.name} processing "
+            f"{task.description}"
+        )
         await asyncio.sleep(2)
-
         task.status = TaskStatus.COMPLETED
+        print(
+            f"{self.name} completed "
+            f"{task.description}"
+        )
 
-        print(f"{self.name} completed {task.description}")
+    async def process_event(self, event):
+        pass
 
-    async def send_message(self, receiver, message):
+    def set_parent(self, parent):
+        self.parent = parent
 
-        await receiver.queue.enqueue(message)
+    def add_child(self, child):
+        child.set_parent(self)
+        self.children.append(child)
 
-    async def process_queue(self):
-
+    async def run(self):
         while True:
-
-            item = await self.queue.dequeue()
-
-            await self.process(item)
-
-    def __repr__(self):
-
-        return f"Agent(name={self.name})"
+            event = await self.inbox.get()
+            await self.process_event(event)
 
 
 class AgentNode(Agent):
 
-    def __init__(self, name, role, sop=""):
-
+    def __init__(self,name,role,sop=""):
         super().__init__(name)
-
         self.role = role
         self.sop = sop
+        self.registry = None
 
-    async def process(self, task):
+    def describe(self):
 
-        self.memory.add(task.description)
+        return {
+            "name": self.name,
+            "role": self.role,
+            "sop": self.sop
+        }
 
-        task.status = TaskStatus.RUNNING
+    async def process_event(self, event):
 
-        print(f"\n[{self.name}]")
-        print(f"Role: {self.role}")
-        print(f"Task: {task.description}")
+        if event.event_type == EventType.TASK:
 
-        await asyncio.sleep(2)
+            task = event.content
+            if "complex" in task.description:
+                print(
+                    f"{self.name} delegating task"
+                )
+                self.state = AgentState.WAITING
+                print(
+                    f"{self.name} waiting for child result"
+                )
+            else:
+                # process normally
+                self.memory.add(task.description)
+                context = self.memory.get_all()
+                self.state = AgentState.WORKING
+                task.status = TaskStatus.RUNNING
 
-        task.status = TaskStatus.COMPLETED
+                print(f"\n[{self.name}]")
+                print(f"Role: {self.role}")
+                print(f"Task: {task.description}")
 
-        print(f"{self.name} completed task")
+                await asyncio.sleep(2)
+
+                self.state = AgentState.IDLE
+                task.status = TaskStatus.COMPLETED
+
+                print(
+                    f"{self.name} completed task"
+                )
+
+                await self.send_event(
+                    receiver=self.parent.name,
+                    event_type=EventType.RESULT,
+                    content=f"Result from {self.name}"
+                )
+        elif event.event_type == EventType.RESULT:
+            print(
+                f"{self.name} received result:"
+                f" {event.content}"
+            )
+            self.state = AgentState.IDLE
+
+
+    async def spawn_child_agent(self,name,role,sop):
+
+        agent = AgentFactory.create_agent(
+            name=name,
+            role=role,
+            sop=sop
+        )
+
+        self.add_child(agent)
+        self.registry.register(agent)
+        agent.set_router(self.router)
+        self.router.register_agent(agent)
+        asyncio.create_task(
+            agent.run()
+        )
+
+        return agent
+    
+    async def delegate_task(self,child,task):
+
+        await self.send_event(
+            receiver=child.name,
+            event_type=EventType.TASK,
+            content=task
+        )
+
+
 
 
 class AgentFactory:
 
     @staticmethod
-    def create_agent(name, role, sop=""):
+    def create_agent(name,role,sop=""):
 
         return AgentNode(
             name=name,
@@ -84,20 +180,25 @@ class AgentFactory:
 class BossAgent(Agent):
 
     def __init__(self, name):
-
         super().__init__(name)
-
-        self.children = []
-        self.task_registry = {}
+        self.registry = AgentRegistry()
         self.event_log = []
+        self.scheduler = Scheduler()
+        self.children = []
 
-    async def process(self, task):
+    async def process_event(self, event):
 
-        print(f"\n{self.name} received main task:")
+        print(
+            f"[Boss] Received "
+            f"{event.content}"
+        )
+
+    async def start_workflow(self, task):
+        print(
+            f"\n{self.name} received:"
+        )
         print(task.description)
-
         domains = self.decompose_task(task)
-
         await self.spawn_agents(domains)
 
     def decompose_task(self, task):
@@ -106,17 +207,17 @@ class BossAgent(Agent):
             {
                 "name": "AcademicNode",
                 "role": "Curriculum Planning",
-                "sop": "Design curriculum and course structure"
+                "sop": "Design curriculum"
             },
             {
                 "name": "FinanceNode",
                 "role": "Finance Planning",
-                "sop": "Design budget and fee structure"
+                "sop": "Budget planning"
             },
             {
                 "name": "ComplianceNode",
                 "role": "Compliance Planning",
-                "sop": "Handle accreditation and compliance"
+                "sop": "Accreditation"
             }
         ]
 
@@ -130,14 +231,48 @@ class BossAgent(Agent):
                 sop=domain["sop"]
             )
 
-            self.children.append(agent)
+            self.registry.register(agent)
+            agent.set_router(self.router)
+            self.router.register_agent(agent)
 
-            asyncio.create_task(agent.process_queue())
-
-            subtask = Task(
-                description=f"Handle {domain['role']}"
+            asyncio.create_task(
+                agent.run()
             )
 
-            await agent.queue.enqueue(subtask)
+            subtask = Task(
+                description=
+                f"Handle {domain['role']}"
+            )
+            self.add_child(agent)
 
-            print(f"{self.name} spawned {agent.name}")
+            self.scheduler.submit_task(subtask)
+
+            print(
+                f"{self.name} spawned "
+                f"{agent.name}"
+            )
+    
+    async def dispatch_tasks(self):
+
+        idle_agents = self.registry.get_idle_agents()
+
+        while idle_agents and self.scheduler.has_tasks():
+            task = self.scheduler.get_next_task()
+            agent = idle_agents.pop(0)
+
+            await self.send_event(
+                receiver=agent.name,
+                event_type=EventType.TASK,
+                content=task
+            )
+
+            print(
+                f"[Scheduler] Assigned "
+                f"{task.description} -> {agent.name}"
+            )
+
+        await self.dispatch_tasks()
+
+    def add_child(self, child):
+        child.set_parent(self)
+        self.children.append(child)

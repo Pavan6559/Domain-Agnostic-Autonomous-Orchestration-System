@@ -2,23 +2,36 @@ import asyncio
 
 from core import Task
 from agents import BossAgent
+from router import EventRouter
 
 
 async def main():
 
-    boss = BossAgent("BossAgent")
+    router = EventRouter()
+
+    boss = BossAgent(
+        "BossAgent"
+    )
+
+    boss.set_router(router)
+
+    router.register_agent(boss)
 
     asyncio.create_task(
-        boss.process_queue()
+        boss.run()
     )
 
     initial_task = Task(
-        description="Create B.Tech AI degree program"
+        description=
+        "Create B.Tech AI degree program"
     )
 
-    await boss.queue.enqueue(initial_task)
+    await boss.start_workflow(
+        initial_task
+    )
 
     while True:
+
         await asyncio.sleep(1)
 
 
