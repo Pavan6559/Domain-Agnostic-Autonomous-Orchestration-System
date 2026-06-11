@@ -81,6 +81,8 @@ class AgentNode(Agent):
         self.role = role
         self.sop = sop
         self.registry = None
+        self.pending_results = []
+        self.expected_results = 0
 
     def describe(self):
 
@@ -103,6 +105,17 @@ class AgentNode(Agent):
                 print(
                     f"{self.name} waiting for child result"
                 )
+                child = await self.spawn_child_agent(
+                    name=f"{self.name}_child",
+                    role="Research Assistant",
+                    sop="Handle delegated work"
+                )
+                self.expected_results += 1
+                print(
+                    f"{self.name} spawned "
+                    f"{child.name}"
+                )
+                await self.delegate_task(child,Task(description="Simple delegated task"))
             else:
                 # process normally
                 self.memory.add(task.description)
@@ -123,17 +136,31 @@ class AgentNode(Agent):
                     f"{self.name} completed task"
                 )
 
-                await self.send_event(
-                    receiver=self.parent.name,
-                    event_type=EventType.RESULT,
-                    content=f"Result from {self.name}"
-                )
+                if self.parent:
+                    await self.send_event(
+                        receiver=self.parent.name,
+                        event_type=EventType.RESULT,
+                        content={
+                            "agent": self.name,
+                            "result": task.description
+                        }
+                    )
+                else:
+                    await self.send_event(
+                        receiver="BossAgent",
+                        event_type=EventType.STATUS,
+                        content=f"{self.name} completed"
+                    )
         elif event.event_type == EventType.RESULT:
-            print(
-                f"{self.name} received result:"
-                f" {event.content}"
-            )
-            self.state = AgentState.IDLE
+            self.pending_results.append(event.content)
+            print(f"{self.name} received result: {event.content}")
+            results=self.aggregate_results()
+            print(f"{self.name} aggregated {len(results)} results")
+            if len(results) >= self.expected_results:
+                print(
+                    f"{self.name} received all expected results"
+                )
+                self.state = AgentState.IDLE
 
 
     async def spawn_child_agent(self,name,role,sop):
@@ -143,7 +170,7 @@ class AgentNode(Agent):
             role=role,
             sop=sop
         )
-
+        agent.registry = self.registry
         self.add_child(agent)
         self.registry.register(agent)
         agent.set_router(self.router)
@@ -162,7 +189,9 @@ class AgentNode(Agent):
             content=task
         )
 
+    def aggregate_results(self):
 
+        return self.pending_results
 
 
 class AgentFactory:
@@ -175,6 +204,7 @@ class AgentFactory:
             role=role,
             sop=sop
         )
+
 
 
 class BossAgent(Agent):
@@ -192,6 +222,7 @@ class BossAgent(Agent):
             f"[Boss] Received "
             f"{event.content}"
         )
+        await self.dispatch_tasks()
 
     async def start_workflow(self, task):
         print(
@@ -230,7 +261,7 @@ class BossAgent(Agent):
                 role=domain["role"],
                 sop=domain["sop"]
             )
-
+            agent.registry = self.registry
             self.registry.register(agent)
             agent.set_router(self.router)
             self.router.register_agent(agent)
@@ -251,7 +282,9 @@ class BossAgent(Agent):
                 f"{self.name} spawned "
                 f"{agent.name}"
             )
+        await self.dispatch_tasks()
     
+
     async def dispatch_tasks(self):
 
         idle_agents = self.registry.get_idle_agents()
@@ -270,8 +303,6 @@ class BossAgent(Agent):
                 f"[Scheduler] Assigned "
                 f"{task.description} -> {agent.name}"
             )
-
-        await self.dispatch_tasks()
 
     def add_child(self, child):
         child.set_parent(self)
