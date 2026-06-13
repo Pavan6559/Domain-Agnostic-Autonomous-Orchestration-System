@@ -20,10 +20,14 @@ class Agent:
         self.name = name
         self.memory = Memory()
         self.inbox = asyncio.Queue()
+        self.shared_memory = None
+        self.state_manager = None
         self.router = None
         self.state = AgentState.IDLE
         self.parent = None
         self.children = []
+        self.planner = None
+        self.level = 0
 
     def set_router(self, router):
         self.router = router
@@ -51,7 +55,7 @@ class Agent:
             f"{self.name} processing "
             f"{task.description}"
         )
-        await asyncio.sleep(2)
+        await asyncio.sleep(2) # later this will be replaced by try/except block to handle errors and retries
         task.status = TaskStatus.COMPLETED
         print(
             f"{self.name} completed "
@@ -72,6 +76,22 @@ class Agent:
         while True:
             event = await self.inbox.get()
             await self.process_event(event)
+    
+    def is_sibling(self, agent):
+        if self.parent is None:
+            return False
+
+        return agent in self.parent.children
+    
+    def can_communicate(self, target):
+        if target == self.parent:
+            return True
+        if target in self.children:
+            return True
+        if self.is_sibling(target):
+            return True
+
+        return False
 
 
 class AgentNode(Agent):
@@ -83,6 +103,10 @@ class AgentNode(Agent):
         self.registry = None
         self.pending_results = []
         self.expected_results = 0
+        self.state_manager = None
+        self.shared_memory = None
+        self.llm = None
+        self.prompt_builder = None
 
     def describe(self):
 
@@ -97,7 +121,31 @@ class AgentNode(Agent):
         if event.event_type == EventType.TASK:
 
             task = event.content
-            if "complex" in task.description:
+            prompt = self.prompt_builder.build(
+                role=self.role,
+                sop=self.sop,
+                task=task.description,
+                memory=self.memory.get_all(),
+                rag=""
+            )
+
+            decision = await self.planner.create_plan(
+                task=task.description,
+                role=self.role,
+                sop=self.sop,
+                memory=self.memory.get_all(),
+                rag=""
+            )
+            agents = decision["agents"]
+            action = decision["action"]
+            subtasks = decision.get("subtasks",[])
+            roles = decision.get("roles",[])
+
+            print(
+                f"{self.name} decision:"
+                f" {decision}"
+            )
+            if (action == "DELEGATE" and self.level < 2):
                 print(
                     f"{self.name} delegating task"
                 )
@@ -105,23 +153,38 @@ class AgentNode(Agent):
                 print(
                     f"{self.name} waiting for child result"
                 )
-                child = await self.spawn_child_agent(
-                    name=f"{self.name}_child",
-                    role="Research Assistant",
-                    sop="Handle delegated work"
-                )
-                self.expected_results += 1
-                print(
-                    f"{self.name} spawned "
-                    f"{child.name}"
-                )
-                await self.delegate_task(child,Task(description="Simple delegated task"))
+
+                self.expected_results = decision["children"]
+
+                for i, (role, subtask) in enumerate(zip(roles, subtasks)):
+                    child = await self.spawn_child_agent(
+                        name=f"{self.name}_child_{i}",
+                        role=role,
+                        sop=f"perform {role} work"
+                    )
+                    print(
+                        f"{self.name} spawned "
+                        f"{child.name}"
+                    )
+                    await self.delegate_task(
+                        child,
+                        Task(
+                            description=subtask,
+                            owner=self.name
+                        )
+                    )
             else:
                 # process normally
                 self.memory.add(task.description)
                 context = self.memory.get_all()
                 self.state = AgentState.WORKING
                 task.status = TaskStatus.RUNNING
+
+                if self.state_manager:
+                    self.state_manager.set_state(
+                        self.name,
+                        AgentState.WORKING
+                    )
 
                 print(f"\n[{self.name}]")
                 print(f"Role: {self.role}")
@@ -131,9 +194,22 @@ class AgentNode(Agent):
 
                 self.state = AgentState.IDLE
                 task.status = TaskStatus.COMPLETED
+                if self.state_manager:
+                    self.state_manager.set_state(
+                        self.name,
+                        AgentState.IDLE
+                    )
 
                 print(
                     f"{self.name} completed task"
+                )
+                self.shared_memory.write(
+                    f"{self.name}_result",
+                    {
+                        "agent": self.name,
+                        "task": task.description,
+                        "role": self.role
+                    }
                 )
 
                 if self.parent:
@@ -142,7 +218,8 @@ class AgentNode(Agent):
                         event_type=EventType.RESULT,
                         content={
                             "agent": self.name,
-                            "result": task.description
+                            "role": self.role,
+                            "result": f"Completed: {task.description}"
                         }
                     )
                 else:
@@ -156,11 +233,42 @@ class AgentNode(Agent):
             print(f"{self.name} received result: {event.content}")
             results=self.aggregate_results()
             print(f"{self.name} aggregated {len(results)} results")
-            if len(results) >= self.expected_results:
+            if len(self.pending_results) == self.expected_results:
+                final_result = self.aggregate_results()
+                self.pending_results.clear()
+                self.expected_results = 0
+                self.state = AgentState.IDLE
+                if self.state_manager:
+                    self.state_manager.set_state(
+                        self.name,
+                        AgentState.IDLE
+                    )
                 print(
                     f"{self.name} received all expected results"
                 )
-                self.state = AgentState.IDLE
+                # this is just for debugging
+                print(
+                    final_result
+                )
+                if self.parent:
+                    await self.send_event(
+                        receiver=self.parent.name,
+                        event_type=EventType.RESULT,
+                        content={
+                            "agent": self.name,
+                            "result": final_result
+                        }
+                    )
+                else:
+                    await self.send_event(
+                        receiver="BossAgent",
+                        event_type=EventType.RESULT,
+                        content={
+                            "agent": self.name,
+                            "result": final_result
+                        }
+                    )
+
 
 
     async def spawn_child_agent(self,name,role,sop):
@@ -170,7 +278,12 @@ class AgentNode(Agent):
             role=role,
             sop=sop
         )
+        agent.shared_memory = self.shared_memory
+        agent.level = self.level+1
         agent.registry = self.registry
+        agent.llm = self.llm
+        agent.planner = self.planner
+        agent.prompt_builder = self.prompt_builder
         self.add_child(agent)
         self.registry.register(agent)
         agent.set_router(self.router)
@@ -191,7 +304,13 @@ class AgentNode(Agent):
 
     def aggregate_results(self):
 
-        return self.pending_results
+        report = []
+        for result in self.pending_results:
+            agent_name = result["agent"]
+            memory_item = self.shared_memory.read(f"{agent_name}_result")
+            report.append(str(memory_item))
+
+        return "\n".join(report)
 
 
 class AgentFactory:
@@ -215,14 +334,22 @@ class BossAgent(Agent):
         self.event_log = []
         self.scheduler = Scheduler()
         self.children = []
+        self.final_results = []
 
     async def process_event(self, event):
 
-        print(
-            f"[Boss] Received "
-            f"{event.content}"
-        )
+        if event.event_type == EventType.RESULT:
+            self.final_results.append(event.content)
+            print("\n===== FINAL RESULT =====")
+            print(event.content)
+        else:
+            print(
+                f"[Boss] Received "
+                f"{event.content}"
+            )
+
         await self.dispatch_tasks()
+
 
     async def start_workflow(self, task):
         print(
@@ -261,7 +388,11 @@ class BossAgent(Agent):
                 role=domain["role"],
                 sop=domain["sop"]
             )
+            agent.shared_memory = self.shared_memory
             agent.registry = self.registry
+            agent.llm = self.llm
+            agent.planner = self.planner
+            agent.prompt_builder = self.prompt_builder
             self.registry.register(agent)
             agent.set_router(self.router)
             self.router.register_agent(agent)
@@ -307,3 +438,4 @@ class BossAgent(Agent):
     def add_child(self, child):
         child.set_parent(self)
         self.children.append(child)
+
