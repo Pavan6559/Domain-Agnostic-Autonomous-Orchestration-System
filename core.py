@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
+from dataclasses import field
+from datetime import datetime
 
 
 class TaskStatus(Enum):
@@ -37,3 +39,7 @@ class Event:
     receiver: str
     event_type: EventType
     content: object
+    timestamp: str = field(
+        default_factory=lambda:
+        datetime.now().isoformat()
+    )
