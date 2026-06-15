@@ -15,15 +15,17 @@ async def main():
     router = EventRouter()
     shared_memory = SharedMemory()
     planner=Planner(llm)
-    boss = BossAgent(
-        "BossAgent"
-    )
+    boss = BossAgent("BossAgent")
     boss.llm = llm
     boss.planner = planner
     boss.prompt_builder = prompt_builder
     boss.set_router(router)
     boss.shared_memory = shared_memory
     boss.state_manager = None
+    fs = AgentFileSystem(root_dir="outputs")
+    sm = StateManager()
+    boss.filesystem = fs
+    boss.state_manager = sm
     router.register_agent(boss)
 
     asyncio.create_task(

@@ -28,6 +28,7 @@ class Agent:
         self.children = []
         self.planner = None
         self.level = 0
+        self.filesystem = None
 
     def set_router(self, router):
         self.router = router
@@ -107,6 +108,7 @@ class AgentNode(Agent):
         self.shared_memory = None
         self.llm = None
         self.prompt_builder = None
+        self.current_plan = None
 
     def describe(self):
 
@@ -129,38 +131,53 @@ class AgentNode(Agent):
                 rag=""
             )
 
-            decision = await self.planner.create_plan(
+            plan = await self.planner.create_plan(
                 task=task.description,
                 role=self.role,
                 sop=self.sop,
                 memory=self.memory.get_all(),
                 rag=""
             )
-            agents = decision["agents"]
-            action = decision["action"]
-            subtasks = decision.get("subtasks",[])
-            roles = decision.get("roles",[])
+            self.current_plan = plan
+            if self.state_manager:
+                tasks = [
+                    spec.task
+                    for spec in plan.agents
+                ]
+                await self.state_manager.update_todo(
+                    self.name,
+                    tasks
+                )
+                
+            agents = plan.agents
+            action = plan.action
+            agent_specs = plan.agents
 
             print(
                 f"{self.name} decision:"
-                f" {decision}"
+                f" {plan}"
             )
             if (action == "DELEGATE" and self.level < 2):
                 print(
                     f"{self.name} delegating task"
                 )
                 self.state = AgentState.WAITING
+                await self.state_manager.set_state(
+                    self.name,
+                    AgentState.WAITING,
+                    task=task.description
+                )
                 print(
                     f"{self.name} waiting for child result"
                 )
 
                 self.expected_results = decision["children"]
 
-                for i, (role, subtask) in enumerate(zip(roles, subtasks)):
+                for i, spec in enumerate(agent_specs):
                     child = await self.spawn_child_agent(
                         name=f"{self.name}_child_{i}",
-                        role=role,
-                        sop=f"perform {role} work"
+                        role=spec.role,
+                        sop=spec.sop
                     )
                     print(
                         f"{self.name} spawned "
@@ -169,7 +186,7 @@ class AgentNode(Agent):
                     await self.delegate_task(
                         child,
                         Task(
-                            description=subtask,
+                            description=spec.task,
                             owner=self.name
                         )
                     )
@@ -178,6 +195,11 @@ class AgentNode(Agent):
                 self.memory.add(task.description)
                 context = self.memory.get_all()
                 self.state = AgentState.WORKING
+                await self.state_manager.set_state(
+                    self.name,
+                    AgentState.WORKING,
+                    task=task.description
+                )
                 task.status = TaskStatus.RUNNING
 
                 if self.state_manager:
@@ -193,6 +215,11 @@ class AgentNode(Agent):
                 await asyncio.sleep(2)
 
                 self.state = AgentState.IDLE
+                await self.state_manager.set_state(
+                    self.name,
+                    AgentState.IDLE,
+                    task=task.description
+                )
                 task.status = TaskStatus.COMPLETED
                 if self.state_manager:
                     self.state_manager.set_state(
@@ -211,6 +238,16 @@ class AgentNode(Agent):
                         "role": self.role
                     }
                 )
+                file_path = await self.filesystem.write(
+                    agent_name=self.name,
+                    filename="result.md",
+                    content=task.description
+                )
+
+                await self.state_manager.add_output_file(
+                    self.name,
+                    file_path
+                )
 
                 if self.parent:
                     await self.send_event(
@@ -219,7 +256,7 @@ class AgentNode(Agent):
                         content={
                             "agent": self.name,
                             "role": self.role,
-                            "result": f"Completed: {task.description}"
+                            "file_path": file_path
                         }
                     )
                 else:
@@ -231,13 +268,24 @@ class AgentNode(Agent):
         elif event.event_type == EventType.RESULT:
             self.pending_results.append(event.content)
             print(f"{self.name} received result: {event.content}")
-            results=self.aggregate_results()
+            results=await self.aggregate_results()
             print(f"{self.name} aggregated {len(results)} results")
+
             if len(self.pending_results) == self.expected_results:
-                final_result = self.aggregate_results()
+                final_result = await self.aggregate_results()
+                report_path = await self.filesystem.write(
+                    agent_name=self.name,
+                    filename="report.md",
+                    content=final_result
+                )
                 self.pending_results.clear()
                 self.expected_results = 0
                 self.state = AgentState.IDLE
+                await self.state_manager.set_state(
+                    self.name,
+                    AgentState.IDLE,
+                    task=task.description
+                )
                 if self.state_manager:
                     self.state_manager.set_state(
                         self.name,
@@ -249,14 +297,14 @@ class AgentNode(Agent):
                 # this is just for debugging
                 print(
                     final_result
-                )
+                ) #####
                 if self.parent:
                     await self.send_event(
                         receiver=self.parent.name,
                         event_type=EventType.RESULT,
                         content={
                             "agent": self.name,
-                            "result": final_result
+                            "file_path": report_path
                         }
                     )
                 else:
@@ -284,8 +332,16 @@ class AgentNode(Agent):
         agent.llm = self.llm
         agent.planner = self.planner
         agent.prompt_builder = self.prompt_builder
+        agent.filesystem = self.filesystem
+        agent.state_manager = self.state_manager
         self.add_child(agent)
         self.registry.register(agent)
+        await self.state_manager.register(
+            name=agent.name,
+            role=agent.role,
+            depth=agent.level,
+            parent=self.name
+        )
         agent.set_router(self.router)
         self.router.register_agent(agent)
         asyncio.create_task(
@@ -302,13 +358,24 @@ class AgentNode(Agent):
             content=task
         )
 
-    def aggregate_results(self):
+    async def aggregate_results(self):
 
         report = []
+
         for result in self.pending_results:
-            agent_name = result["agent"]
-            memory_item = self.shared_memory.read(f"{agent_name}_result")
-            report.append(str(memory_item))
+
+            file_path = result[
+                "file_path"
+            ]
+
+            content = await self.filesystem.read(
+                file_path
+            )
+
+            if content:
+                report.append(
+                    content
+                )
 
         return "\n".join(report)
 
@@ -340,12 +407,20 @@ class BossAgent(Agent):
 
         if event.event_type == EventType.RESULT:
             self.final_results.append(event.content)
+            # until all the results are received, we cannot build the final report
+            if len(self.final_results) >= 3:
+                await self.build_final_report()
+
             print("\n===== FINAL RESULT =====")
-            print(event.content)
+            print(
+                f"{self.name} received "
+                f"result from "
+                f"{event.content['agent']}"
+            )
         else:
             print(
                 f"[Boss] Received "
-                f"{event.content}"
+                f"{event.content['file_path']}"
             )
 
         await self.dispatch_tasks()
@@ -393,6 +468,8 @@ class BossAgent(Agent):
             agent.llm = self.llm
             agent.planner = self.planner
             agent.prompt_builder = self.prompt_builder
+            agent.filesystem = self.filesystem
+            agent.state_manager = self.state_manager
             self.registry.register(agent)
             agent.set_router(self.router)
             self.router.register_agent(agent)
@@ -438,4 +515,33 @@ class BossAgent(Agent):
     def add_child(self, child):
         child.set_parent(self)
         self.children.append(child)
+
+    async def build_final_report(self):
+        report = []
+
+        for result in self.final_results:
+
+            file_path = result["file_path"]
+            content = await self.filesystem.read(file_path)
+            if content:
+                report.append(content)
+
+        final_content = "\n\n".join(report)
+
+        final_report_path = (
+            await self.filesystem.write(
+                agent_name=self.name,
+                filename="FINAL_REPORT.md",
+                content=final_content
+            )
+        )
+
+        await self.state_manager.add_output_file(self.name,final_report_path)
+
+        print(
+            f"\nFinal report written:"
+            f" {final_report_path}"
+        )
+
+        return final_report_path
 

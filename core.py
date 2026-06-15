@@ -43,3 +43,17 @@ class Event:
         default_factory=lambda:
         datetime.now().isoformat()
     )
+
+@dataclass
+class AgentSpec:
+
+    role: str
+    sop: str
+    task: str
+
+
+@dataclass
+class Plan:
+
+    action: str
+    agents: list[AgentSpec]
