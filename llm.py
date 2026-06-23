@@ -1,26 +1,34 @@
+from langchain_ollama import OllamaLLM
+
 class LLMClient:
 
-    async def generate(self,prompt):
-        prompt = prompt.lower()
-        if "complex" in prompt:
-            return {
-                "action": "DELEGATE",
-                "children": 3,
-                "roles": [
-                    "Researcher",
-                    "Analyst",
-                    "Verifier"
-                ],
-                "subtasks": [
-                    "Research Part",
-                    "Analysis Part",
-                    "Verification Part"
-                ]
-            }
+    def __init__(self,model):
+        self.llm = OllamaLLM(model=model,temperature=0.1)
 
-        return {
-            "action": "COMPLETE"
-        }
+    async def generate(self,prompt):
+        return self.llm.invoke(prompt)
+
+    # async def generate(self,prompt):
+    #     prompt = prompt.lower()
+    #     if "complex" in prompt:
+    #         return {
+    #             "action": "DELEGATE",
+    #             "children": 3,
+    #             "roles": [
+    #                 "Researcher",
+    #                 "Analyst",
+    #                 "Verifier"
+    #             ],
+    #             "subtasks": [
+    #                 "Research Part",
+    #                 "Analysis Part",
+    #                 "Verification Part"
+    #             ]
+    #         }
+
+    #     return {
+    #         "action": "COMPLETE"
+    #     }
 
 class PromptBuilder:
 

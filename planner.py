@@ -1,48 +1,93 @@
+from urllib import response
+
 from core import (Plan,AgentSpec)
+import json
 
 class Planner:
 
     def __init__(self, llm):
         self.llm = llm
 
-    async def create_plan(self,task,role,sop,memory,rag):
-        context = {
-        "role": role,
-        "sop": sop,
-        "task": task,
-        "memory": memory,
-        "rag": rag
-        }
+    def build_prompt(self,task,role,sop,memory,rag):
 
-        print("\n===== PLANNER CONTEXT =====")
-        print(context)
-        if len(task.split()) > 5: # if the task is complex, delegate to multiple agents
-            return Plan(
-                action="DELEGATE",
+        return f"""
+        You are an orchestration planner.
 
-                agents=[
+        Task:
+        {task}
 
-                    AgentSpec(
-                        role="Researcher",
-                        sop="Gather information",
-                        task="Research topic"
-                    ),
+        Role:
+        {role}
 
-                    AgentSpec(
-                        role="Analyst",
-                        sop="Analyze findings",
-                        task="Analyze findings"
-                    ),
+        SOP:
+        {sop}
 
-                    AgentSpec(
-                        role="Verifier",
-                        sop="Verify correctness",
-                        task="Verify conclusions"
-                    )
-                ]
+        Memory:
+        {memory}
+
+        Context:
+        {rag}
+
+        Return ONLY valid JSON.
+
+        Format:
+
+        {{
+            "action":"DELEGATE",
+            "agents":[
+                {{
+                    "role":"Researcher",
+                    "sop":"Gather information",
+                    "task":"Research topic"
+                }}
+            ]
+        }}
+
+        or
+
+        {{
+            "action":"COMPLETE",
+            "agents":[]
+        }}
+        """
+
+    def parse_plan(self,response):
+        print(
+            "\n===== RESPONSE ====="
+        )
+        print(response)
+
+        data = json.loads(response)
+        agents = []
+
+        for spec in data["agents"]:
+            agents.append(
+                AgentSpec(
+                    role=spec["role"],
+                    sop=spec["sop"],
+                    task=spec["task"]
+                )
             )
 
         return Plan(
-            action="COMPLETE",
-            agents=[]
+            action=data["action"],
+            agents=agents
         )
+
+
+    async def create_plan(self,task,role,sop,memory,rag):
+        prompt = self.build_prompt(
+            task,
+            role,
+            sop,
+            memory,
+             rag
+        )
+
+        response = await self.llm.generate(prompt)
+        print(
+            "\n===== RAW PLAN ====="
+        )
+        print(response)
+        plan = self.parse_plan(response)
+        return plan

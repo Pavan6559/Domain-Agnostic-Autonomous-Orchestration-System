@@ -6,11 +6,13 @@ from llm import LLMClient, PromptBuilder
 from memory import SharedMemory
 from planner import Planner
 from router import EventRouter
+from state_manager import StateManager
+from filesystem import AgentFileSystem
 
 
 async def main():
 
-    llm = LLMClient()
+    llm = LLMClient(model="qwen3:8b")
     prompt_builder = PromptBuilder()
     router = EventRouter()
     shared_memory = SharedMemory()
@@ -26,6 +28,11 @@ async def main():
     sm = StateManager()
     boss.filesystem = fs
     boss.state_manager = sm
+    await sm.register(
+        name="BossAgent",
+        role="BossAgent",
+        depth=0
+    )
     router.register_agent(boss)
 
     asyncio.create_task(
