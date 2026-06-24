@@ -1,5 +1,7 @@
 import asyncio
 
+from langgraph.func import task
+
 from core import (
     AgentState,
     Task,
@@ -29,6 +31,7 @@ class Agent:
         self.planner = None
         self.level = 0
         self.filesystem = None
+        self.retriever = None
 
     def set_router(self, router):
         self.router = router
@@ -130,13 +133,23 @@ class AgentNode(Agent):
                 memory=self.memory.get_all(),
                 rag=""
             )
+            rag_context = ""
+
+            if self.retriever:
+
+                rag_context = (
+                    self.retriever.retrieve(
+                        role=self.role,
+                        query=task.description
+                    )
+                )
 
             plan = await self.planner.create_plan(
                 task=task.description,
                 role=self.role,
                 sop=self.sop,
                 memory=self.memory.get_all(),
-                rag=""
+                rag=rag_context
             )
             self.current_plan = plan
             if self.state_manager:
@@ -171,7 +184,7 @@ class AgentNode(Agent):
                     f"{self.name} waiting for child result"
                 )
 
-                self.expected_results = decision["children"]
+                self.expected_results = len(plan.agents)
 
                 for i, spec in enumerate(agent_specs):
                     child = await self.spawn_child_agent(
@@ -187,7 +200,7 @@ class AgentNode(Agent):
                         child,
                         Task(
                             description=spec.task,
-                            owner=self.name
+                            # owner=self.name
                         )
                     )
             else:
@@ -203,7 +216,7 @@ class AgentNode(Agent):
                 task.status = TaskStatus.RUNNING
 
                 if self.state_manager:
-                    self.state_manager.set_state(
+                    await self.state_manager.set_state(
                         self.name,
                         AgentState.WORKING
                     )
@@ -222,7 +235,7 @@ class AgentNode(Agent):
                 )
                 task.status = TaskStatus.COMPLETED
                 if self.state_manager:
-                    self.state_manager.set_state(
+                    await self.state_manager.set_state(
                         self.name,
                         AgentState.IDLE
                     )
@@ -283,11 +296,10 @@ class AgentNode(Agent):
                 self.state = AgentState.IDLE
                 await self.state_manager.set_state(
                     self.name,
-                    AgentState.IDLE,
-                    task=task.description
+                    AgentState.IDLE
                 )
                 if self.state_manager:
-                    self.state_manager.set_state(
+                    await self.state_manager.set_state(
                         self.name,
                         AgentState.IDLE
                     )
@@ -331,6 +343,7 @@ class AgentNode(Agent):
         agent.registry = self.registry
         agent.llm = self.llm
         agent.planner = self.planner
+        agent.retriever = self.retriever
         agent.prompt_builder = self.prompt_builder
         agent.filesystem = self.filesystem
         agent.state_manager = self.state_manager
@@ -468,12 +481,18 @@ class BossAgent(Agent):
             agent.llm = self.llm
             agent.planner = self.planner
             agent.prompt_builder = self.prompt_builder
+            agent.retriever = self.retriever
             agent.filesystem = self.filesystem
             agent.state_manager = self.state_manager
             self.registry.register(agent)
             agent.set_router(self.router)
             self.router.register_agent(agent)
-
+            await self.state_manager.register(
+                name=agent.name,
+                role=agent.role,
+                depth=agent.level,
+                parent=self.name
+            )
             asyncio.create_task(
                 agent.run()
             )
